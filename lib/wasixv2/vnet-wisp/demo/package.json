@@ -1,0 +1,16 @@
+{
+  "name": "wasixv2-web-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "cargo build --release --target wasm32-unknown-unknown && wasm-bindgen --target web --out-dir www/pkg target/wasm32-unknown-unknown/release/wasixv2_web_demo.wasm",
+    "start": "node server.mjs",
+    "test": "node check.mjs"
+  },
+  "dependencies": {
+    "@mercuryworkshop/wisp-js": "0.4.1"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

@@ -10,12 +10,15 @@
 //! no half-close. Streams connect once that first CONTINUE arrives, and a refused connection
 //! shows as an error after `connect` succeeded, on the first read or write. `shutdown` of the
 //! write side stops the guest writing but keeps the stream open, so the reply still arrives.
-//! The guest's names resolve on the WISP server ([`names`]).
+//! The guest's names resolve on the WISP server ([`names`]). In a browser, [`web::connect`]
+//! (feature `web`) opens the WebSocket and wires it to a backend.
 
 mod datagram;
 mod frame;
 mod names;
 mod stream;
+#[cfg(feature = "web")]
+pub mod web;
 
 use std::{
     collections::HashMap,

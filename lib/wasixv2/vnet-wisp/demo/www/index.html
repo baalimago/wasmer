@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WASIX v2 over WISP</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 48rem; padding: 0 1rem; }
+  pre { background: #f4f4f4; padding: 1rem; white-space: pre-wrap; min-height: 6rem; }
+</style>
+<h1>WASIX v2 guest over WISP</h1>
+<p>A WASIX v2 machine boots in this page. Its guest fetches <code>/hello.txt</code> from this
+server through the WISP proxy at the address below.</p>
+<p><label>WISP server <input id="url" size="40"></label> <button id="run">Run guest</button></p>
+<pre id="out"></pre>
+<script type="module">
+  import init, { run } from "./pkg/wasixv2_web_demo.js";
+
+  const url = document.querySelector("#url");
+  const out = document.querySelector("#out");
+  url.value = `ws://${location.host}/`;
+
+  async function runGuest() {
+    out.textContent = "running…";
+    try {
+      const outcome = await run(url.value);
+      out.textContent = `exit status ${outcome.status}\n\n${outcome.stdout}${outcome.stderr}`;
+      return { status: outcome.status, stdout: outcome.stdout };
+    } catch (error) {
+      out.textContent = `failed: ${error}`;
+      throw error;
+    }
+  }
+
+  await init();
+  document.querySelector("#run").addEventListener("click", runGuest);
+  window.runGuest = runGuest;
+  document.body.dataset.ready = "true";
+</script>

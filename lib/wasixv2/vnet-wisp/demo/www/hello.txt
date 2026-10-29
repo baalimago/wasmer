@@ -1,0 +1,1 @@
+Hello from the host, fetched by a WASIX v2 guest over WISP.
