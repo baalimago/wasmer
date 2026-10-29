@@ -4,9 +4,17 @@
 //! the locked `wasm-bindgen` version.
 #![cfg(all(target_arch = "wasm32", feature = "web"))]
 
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{
+    cell::Cell,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
-use wasixv2_host::{Host, WebHost};
+use wasixv2_host::{Host, ThreadStart, WebHost};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -45,4 +53,21 @@ async fn spawn_local_runs_in_the_background() {
     host.sleep(Duration::from_millis(1)).await;
     assert!(ran.get());
     assert_eq!(host.executor().run_blocking(|| 6 * 7).await, 42);
+}
+
+#[wasm_bindgen_test]
+async fn threads_run_on_the_event_loop() {
+    let host = WebHost::new();
+    let ran = Arc::new(AtomicBool::new(false));
+    let flag = ran.clone();
+    let start: ThreadStart = Box::new(move || {
+        Box::pin(async move {
+            WebHost::new().sleep(Duration::from_millis(1)).await;
+            flag.store(true, Ordering::Relaxed);
+        })
+    });
+    host.executor().spawn_thread(start).unwrap();
+    assert!(!ran.load(Ordering::Relaxed));
+    host.sleep(Duration::from_millis(10)).await;
+    assert!(ran.load(Ordering::Relaxed));
 }

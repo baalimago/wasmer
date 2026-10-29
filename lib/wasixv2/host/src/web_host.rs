@@ -15,6 +15,9 @@ extern "C" {
     #[wasm_bindgen(js_namespace = performance, js_name = now)]
     fn performance_now() -> f64;
 
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(message: &str);
+
     #[wasm_bindgen(js_name = setTimeout)]
     fn set_timeout(handler: &Function, millis: f64) -> JsValue;
 
@@ -40,6 +43,9 @@ const MAX_RANDOM_CHUNK: usize = 65536;
 /// - Background futures run on `wasm_bindgen_futures::spawn_local`. Blocking work runs inline
 ///   when awaited: the JavaScript thread has nowhere else to put it, so it stalls the event loop
 ///   for its duration.
+/// - Guest threads, and with them every process but the first, run on the same event loop as
+///   futures of their own: they take turns at their syscalls, the waits that the loader turns
+///   `memory.atomic.wait` into included, and a guest that computes holds the others up.
 #[derive(Default)]
 pub struct WebHost;
 
@@ -84,6 +90,11 @@ impl Host for WebHost {
     fn executor(&self) -> &dyn Executor {
         self
     }
+
+    // stderr goes nowhere on wasm32-unknown-unknown.
+    fn report(&self, message: &str) {
+        console_error(message);
+    }
 }
 
 impl Executor for WebHost {
@@ -95,14 +106,12 @@ impl Executor for WebHost {
         Box::pin(async move { work() })
     }
 
-    // TODO: start a web worker that receives the module and the shared memory (as wasmer's js
-    // backend sends shared objects) and drives `start` on its own event loop.
+    // TODO: a web worker per thread that receives the module and the shared memory (as
+    // wasmer's js backend sends shared objects) and drives `start` on its own event loop, so
+    // threads run in parallel.
     fn spawn_thread(&self, start: ThreadStart) -> io::Result<()> {
-        drop(start);
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "guest threads are not supported in the browser yet",
-        ))
+        wasm_bindgen_futures::spawn_local(start());
+        Ok(())
     }
 }
 
