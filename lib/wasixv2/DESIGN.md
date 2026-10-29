@@ -40,7 +40,7 @@ layers              trace · record · policy (optional, composed as generics)
 wasixv2-kernel      tasks, processes, signals, memory, IPC, terminals, sockets
   │
   ├── wasixv2-vfs   ── vfs-mem · vfs-host · vfs-overlay · vfs-package
-  ├── wasixv2-vnet  ── vnet-host · vnet-switch
+  ├── wasixv2-vnet  ── vnet-host · vnet-wisp · vnet-switch
   └── wasixv2-host     executor, clocks, timers, entropy, byte streams
 ```
 
@@ -566,6 +566,14 @@ The kernel-facing traits are in `vnet/src/api.rs`. Traffic for a destination tha
 - **Urgent data** crosses the bridge: a host socket keeps urgent bytes inline, and the reactor reads no more than the host holds (`FIONREAD`) after asking `SIOCATMARK`, so a read that starts at a mark holds the urgent byte first (a read never crosses one) and the guest queue gets the mark. A guest `MSG_OOB` byte is sent to the host alone with `MSG_OOB`, after the bytes before it.
 - Host errors keep their Linux errno numbers. Dropping the guest's handle flushes and closes the host socket, or resets it when unread data or `SO_LINGER` zero call for that. An orphan still flushing is reset once its peer has taken nothing for 60 seconds (standing in for `tcp_fin_timeout` and the orphan retries) or its `SO_LINGER` time is up.
 
+`wasixv2-vnet-wisp` is the browser's backend: the guest's outside traffic goes over [WISP](https://github.com/MercuryWorkshop/wisp-protocol) v1, TCP and UDP streams multiplexed over one WebSocket to a proxy, which opens the real sockets. It does no I/O: the embedder gives it the WebSocket's binary messages (`WispBackend::receive`, `disconnected`) and sends the frames it hands to a `FrameSink`, so the same code is tested natively against an in-memory server.
+
+- **Streams.** A TCP stream connects once the server's first CONTINUE arrives, as WISP has no connect acknowledgement, so a refused connection shows after `connect` succeeded, as `SO_ERROR` and on the next read or write. Each DATA packet, up to 64 KiB, spends one packet of the stream's credit and a write without credit is `EAGAIN`; CONTINUE restores it and wakes `OUT`. A voluntary CLOSE is the peer's FIN; other reasons become `ECONNREFUSED` (a network error before any data, refusals, blocked hosts), `ECONNRESET` (a network error after data), `EHOSTUNREACH` or `ETIMEDOUT`. WISP has no half-close, so `shutdown(SHUT_WR)` only stops the guest writing, and the reply still arrives; dropping the guest's socket sends CLOSE.
+- **Datagrams.** A WISP UDP stream is connected to one address, so a guest socket opens one per destination it sends to, and only those destinations can answer.
+- **Names resolve on the proxy.** The DNS server's lookups get an address of their own from 198.18.0.0/15 (RFC 2544's benchmarking range, as fake-IP DNS proxies use) per name, for the backend's life, and a connection to one asks the proxy for the name, so names behind CDNs resolve where the connection is made. PTR of such an address gives the name back; forwarded queries (other record types) fail with `SERVFAIL`, as a WISP proxy has no resolver to ask.
+- **Not carried:** publishing (WISP opens no inbound streams), ICMP, urgent marks (the byte goes inline).
+- **Losing the WebSocket** fails every stream (`ECONNRESET`, or `ENETUNREACH` before it connected) and new ones with `ENETUNREACH`, until a new WebSocket's first frame brings the link up again.
+
 ## Execution
 
 The execution crate is the only layer below the facade that knows about the wasm engine. It turns kernel tasks into running wasm, and turns guest control flow into kernel operations.
@@ -838,6 +846,7 @@ The new crates live under `lib/wasixv2/`, use `wasixv2-` package names, and star
 | `wasixv2-vfs-package` | `vfs-package` | Read-only packaged filesystem images | vfs |
 | `wasixv2-vnet` | `vnet` | Socket-level network per namespace: port tables, interfaces and routes, in-memory streams and datagram queues, publishing, the backend trait | abi, wait |
 | `wasixv2-vnet-host` | `vnet-host` | Backend that carries outbound connections over host sockets and accepts published ports | vnet |
+| `wasixv2-vnet-wisp` | `vnet-wisp` | Backend that carries outbound connections over WISP, for browsers | vnet |
 | `wasixv2-vnet-switch` | `vnet-switch` | Socket-level virtual switch that routes connections between machines by address | vnet |
 | `wasixv2-kernel` | `kernel` | Tasks, processes, credentials, signals, namespaces, IPC, memory, terminals, pseudo filesystems, socket layer, Unix sockets; implements `Syscalls` | abi, syscalls, host, pages, vfs, vnet, wait |
 | `wasixv2-checkpoint` | `checkpoint` | Kernel state checkpoint and restore | kernel |
@@ -857,6 +866,7 @@ The new crates live under `lib/wasixv2/`, use `wasixv2-` package names, and star
 
 | Date | Decision | Why |
 | --- | --- | --- |
+| 2026-10-29 | The WISP backend answers name lookups with fake addresses from 198.18.0.0/15 and connects by name; it is sans-IO, fed frames by the embedder | A WISP proxy resolves names itself and has no DNS of its own to forward to: connecting by name needs no third-party DNS-over-HTTPS service from the page, and keeps CDN names resolving where the connection is made. Sans-IO keeps the browser glue to a WebSocket and lets the protocol be tested natively |
 | 2026-10-29 | `total_vm` and `mlockall`'s locks leave out the main stack's reservation below a stack area that starts 128 KiB below the top and grows to every stack pointer on it a lock call sees; the execution layer reports the stack from `__stack_pointer` and `__data_end` (`UserMemory::main_stack`) | Linux's stack area grows as the stack is used, while the image reserves the whole 8 MiB stack, which alone filled the default `RLIMIT_MEMLOCK` and made every `mlockall(MCL_CURRENT)` fail with `ENOMEM` (see [Locked memory](#locked-memory)) |
 | 2026-10-28 | The kernel's copies honour the address space's page map: reading or writing an unmapped or `PROT_NONE` page, or writing one without `PROT_WRITE`, fails with `EFAULT`; the guest's own accesses stay unchecked. The `Mm` publishes its restricted ranges in a `PageAccess` the execution layer checks every copy against; the kernel's own fills of mappings bypass it (`force_read`/`force_write`, `FOLL_FORCE`) | Syscalls then fail on bad pointers as on Linux (LTP's `tst_get_bad_addr` and guard pages after test buffers, `clone302`), at the cost of one atomic load per copy while nothing is restricted; it supersedes "other protections stay unenforced" below for copies, without making `mprotect` a host call |
 | 2026-10-28 | Futexes in the low guard fault where Linux's would in unmapped memory: an operation that reads or changes the word, a shared key, the robust list walk; the kernel asks the memory for its guard (`UserMemory::low_guard`) for words below `mmap_min_addr` | The read-only guard lets the guest's loads through only for clang's null `va_list`; a futex word there is never one, and `futex(NULL, FUTEX_WAIT, 0)` slept forever where Linux fails with `EFAULT` (LTP's `futex_supported_by_kernel`) |
