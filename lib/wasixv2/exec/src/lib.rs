@@ -19,6 +19,7 @@ mod pagemap;
 mod preempt;
 mod process;
 mod signal;
+mod spawn;
 mod thread;
 mod wasixv2;
 

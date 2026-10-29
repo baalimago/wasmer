@@ -1,5 +1,5 @@
 //! The native `wasixv2` guest ABI: the generated import table, `_start`, the thread entry, the
-//! riscv32-shaped signal frame and the vfork return export.
+//! riscv32-shaped signal frame, the vfork return export and `spawn`.
 
 use std::{any::Any, sync::Arc};
 
@@ -12,7 +12,7 @@ use wasmer::{
 use crate::{
     ExecEnv, ExecError,
     abi::{Abi, AbiInstance, Entry, EntryReturn, Role, Sigreturn, VforkResume},
-    asyncify, fork, generated, process, signal, thread,
+    asyncify, fork, generated, process, signal, spawn, thread,
 };
 
 /// The `wasixv2` ABI: modules that import from [`crate::IMPORT_MODULE`].
@@ -65,6 +65,7 @@ where
         module: &Module,
     ) -> Imports {
         let mut imports = generated::imports(store, env, module);
+        spawn::imports(store, env, &mut imports);
         if asyncify::instrumented(module) {
             fork::imports(store, env, &mut imports);
         }
@@ -87,6 +88,7 @@ where
             entry: entry.clone(),
             signal: signal::SignalExports::new(instance),
             vfork_return: exports.get_function(process::VFORK_RETURN).ok().cloned(),
+            spawning: spawn::Spawning::default(),
         }))
     }
 
@@ -102,6 +104,8 @@ pub(crate) struct Wasixv2Instance {
     signal: signal::SignalExports,
     /// `wasixv2_vfork_return(pid)`, which libc exports to unwind to the vfork point.
     vfork_return: Option<Function>,
+    /// The vfork children of `spawn` calls, whose parent returns from the import.
+    pub(crate) spawning: spawn::Spawning,
 }
 
 impl Wasixv2Instance {
@@ -158,10 +162,13 @@ impl<S: Control + Send + Sync + 'static> AbiInstance<S> for Wasixv2Instance {
     fn vfork_resume<'a>(
         &'a self,
         env: &'a AsyncFunctionEnvMut<ExecEnv<S>>,
-        _child: TaskId,
+        child: TaskId,
         pid: i32,
     ) -> LocalFuture<'a, VforkResume> {
         Box::pin(async move {
+            if self.spawning.take(child) {
+                return VforkResume::ReturnSuccess;
+            }
             VforkResume::Unwind(process::vfork_return(env, self.vfork_return.as_ref(), pid).await)
         })
     }
