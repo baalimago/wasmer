@@ -268,7 +268,7 @@ impl From<Trap> for RuntimeError {
 
 impl From<RuntimeError> for wasm_bindgen::JsValue {
     fn from(value: RuntimeError) -> Self {
-        Self::from(value.to_string())
+        Trap::user(Box::new(value)).into()
     }
 }
 
