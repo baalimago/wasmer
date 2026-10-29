@@ -10,26 +10,26 @@ use wasixv2_abi::{
     ConstMntIdReqPtr, ConstMountAttrPtr, ConstMqAttrPtr, ConstMsgbufPtr, ConstNsIdReqPtr,
     ConstOpenHowPtr, ConstRlimit64Ptr, ConstS32Array, ConstSchedParamPtr, ConstSembufArray,
     ConstSigactionPtr, ConstSigaltstackPtr, ConstSigeventPtr, ConstSiginfoPtr,
-    ConstSigsetArgpackPtr, ConstSigsetPtr, ConstSockaddrPtr, ConstStackSnapshotPtr,
-    ConstUlongArray, ConstUptrArray, ConstUserCapDataArray, ConstUserMsghdrPtr, ConstVoidPtr,
-    ConstXattrArgsPtr, Cstr, CstrArray, DlFlags, DlHandle, DlHandlePtr, EpollCreateFlags,
-    EpollCtlOp, EpollEventArray, EventfdFlags, FadviseAdvice, FallocFlags, FcntlCmd, Fd, FdPair,
-    FileAttrPtr, FileHandlePtr, FlockOp, Futex2Flags, FutexOp, GidArray, GidPtr, GrndFlags, Idtype,
-    InotifyInitFlags, InotifyMask, IoEventArray, IoEventPtr, IoUringParamsPtr, IocbPtr,
-    IoctlRequest, ItimerWhich, KernelFdSetPtr, KernelItimerspecPtr, KernelOldItimervalPtr,
-    KernelTimespecPtr, KernelTimexPtr, LinuxDirent64Ptr, LoffPtr, LsmCtxPtr, MadviseAdvice,
-    MapFlags, MclFlags, MembarrierCmd, MembarrierCmdFlags, MemfdFlags, MlockFlags, MmsghdrArray,
-    MountFlags, MqAttrPtr, MremapFlags, MsgFlags, MsgbufPtr, Msqid64DsPtr, MsyncFlags,
-    NewUtsnamePtr, OpenFlags, PollfdArray, PrctlOption, PrioWhich, ProtFlags, PtraceRequest,
-    RebootCmd, ReflectionResultPtr, RenameFlags, Rlimit64Ptr, RlimitResource, RobustListHeadPtr,
-    RobustListHeadPtrPtr, RusagePtr, RusageWho, RwfFlags, S32Array, S32Ptr, SchedAttrPtr,
-    SchedParamPtr, SchedPolicy, SeekWhence, Shmid64DsPtr, ShutdownHow, SigactionPtr,
-    SigaltstackPtr, SiginfoPtr, Signal, SignalfdFlags, SigprocmaskHow, SigsetPtr, SockaddrPtr,
-    SocketFlags, SocketLevel, SocklenPtr, SpliceFlags, StackSnapshotPtr, Statfs64Ptr, StatxMask,
-    StatxPtr, SyncFileRangeFlags, SysinfoPtr, TimerFlags, TimerIdPtr, TimerfdFlags,
-    TimerfdSettimeFlags, TmsPtr, U32Ptr, U64Array, U64Ptr, UidPtr, UlongArray, UmountFlags,
-    UptrPtr, UserCapDataArray, UserCapHeaderPtr, UserMsghdrPtr, UsizePtr, VoidPtr, WaitOptions,
-    XattrArgsPtr, XattrFlags,
+    ConstSigsetArgpackPtr, ConstSigsetPtr, ConstSockaddrPtr, ConstSpawnAttrPtr,
+    ConstSpawnFileActionArray, ConstStackSnapshotPtr, ConstUlongArray, ConstUptrArray,
+    ConstUserCapDataArray, ConstUserMsghdrPtr, ConstVoidPtr, ConstXattrArgsPtr, Cstr, CstrArray,
+    DlFlags, DlHandle, DlHandlePtr, EpollCreateFlags, EpollCtlOp, EpollEventArray, EventfdFlags,
+    FadviseAdvice, FallocFlags, FcntlCmd, Fd, FdPair, FileAttrPtr, FileHandlePtr, FlockOp,
+    Futex2Flags, FutexOp, GidArray, GidPtr, GrndFlags, Idtype, InotifyInitFlags, InotifyMask,
+    IoEventArray, IoEventPtr, IoUringParamsPtr, IocbPtr, IoctlRequest, ItimerWhich, KernelFdSetPtr,
+    KernelItimerspecPtr, KernelOldItimervalPtr, KernelTimespecPtr, KernelTimexPtr,
+    LinuxDirent64Ptr, LoffPtr, LsmCtxPtr, MadviseAdvice, MapFlags, MclFlags, MembarrierCmd,
+    MembarrierCmdFlags, MemfdFlags, MlockFlags, MmsghdrArray, MountFlags, MqAttrPtr, MremapFlags,
+    MsgFlags, MsgbufPtr, Msqid64DsPtr, MsyncFlags, NewUtsnamePtr, OpenFlags, PollfdArray,
+    PrctlOption, PrioWhich, ProtFlags, PtraceRequest, RebootCmd, ReflectionResultPtr, RenameFlags,
+    Rlimit64Ptr, RlimitResource, RobustListHeadPtr, RobustListHeadPtrPtr, RusagePtr, RusageWho,
+    RwfFlags, S32Array, S32Ptr, SchedAttrPtr, SchedParamPtr, SchedPolicy, SeekWhence, Shmid64DsPtr,
+    ShutdownHow, SigactionPtr, SigaltstackPtr, SiginfoPtr, Signal, SignalfdFlags, SigprocmaskHow,
+    SigsetPtr, SockaddrPtr, SocketFlags, SocketLevel, SocklenPtr, SpliceFlags, StackSnapshotPtr,
+    Statfs64Ptr, StatxMask, StatxPtr, SyncFileRangeFlags, SysinfoPtr, TimerFlags, TimerIdPtr,
+    TimerfdFlags, TimerfdSettimeFlags, TmsPtr, U32Ptr, U64Array, U64Ptr, UidPtr, UlongArray,
+    UmountFlags, UptrPtr, UserCapDataArray, UserCapHeaderPtr, UserMsghdrPtr, UsizePtr, VoidPtr,
+    WaitOptions, XattrArgsPtr, XattrFlags,
 };
 use wasixv2_syscalls::{Caller, Control, Syscalls, UserSlice, UserSliceMut};
 use wasmer::{AsyncFunctionEnvMut, Function, FunctionEnv, Imports, Module, RuntimeError, Store};
@@ -59,6 +59,7 @@ where
             "startup_size" => Function::new_typed_with_env_async(store, env, startup_size::<S>),
             "startup_get" => Function::new_typed_with_env_async(store, env, startup_get::<S>),
             "thread_spawn" => Function::new_typed_with_env_async(store, env, thread_spawn::<S>),
+            "spawn" => Function::new_typed_with_env_async(store, env, spawn::<S>),
             "signal_callback_register" => {
                 Function::new_typed_with_env_async(store, env, signal_callback_register::<S>)
             }
@@ -579,6 +580,42 @@ where
             S32Ptr::new(parent_tid as u32),
             tls as u32,
             S32Ptr::new(child_tid as u32),
+        )
+        .await;
+        if let Some(ret) = return_to_guest(&env, &*syscalls, task, ret).await {
+            return ret;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn spawn<S>(
+    env: AsyncFunctionEnvMut<ExecEnv<S>>,
+    pid: i32,
+    path: i32,
+    actions: i32,
+    actions_len: i32,
+    attr: i32,
+    argv: i32,
+    envp: i32,
+) -> Result<i32, RuntimeError>
+where
+    S: Syscalls + Control + 'static,
+{
+    let (syscalls, task) = caller_parts(&env).await;
+    let memory = GuestMemory { env: &env };
+    let caller = Caller::new(task, &memory);
+    loop {
+        let ret = Syscalls::spawn(
+            &*syscalls,
+            &caller,
+            S32Ptr::new(pid as u32),
+            Cstr::new(path as u32),
+            ConstSpawnFileActionArray::new(actions as u32),
+            actions_len as u32,
+            ConstSpawnAttrPtr::new(attr as u32),
+            CstrArray::new(argv as u32),
+            CstrArray::new(envp as u32),
         )
         .await;
         if let Some(ret) = return_to_guest(&env, &*syscalls, task, ret).await {
