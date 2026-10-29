@@ -29,7 +29,7 @@
 
 use std::{
     ops::Range,
-    sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{PoisonError, RwLock, RwLockReadGuard},
 };
 
 #[cfg(all(unix, feature = "sys"))]
@@ -41,7 +41,6 @@ use wasmer::{
     AsStoreMut, AsStoreRef, AsyncFunctionEnvHandle, AsyncFunctionEnvMut, Instance, Memory,
 };
 
-#[cfg(all(unix, feature = "sys"))]
 use crate::base::Base;
 use crate::{
     ExecEnv,
@@ -147,7 +146,7 @@ impl ReadOnly {
     }
 
     #[cfg(all(unix, feature = "sys"))]
-    fn ranges_mut(&self) -> RwLockWriteGuard<'_, Vec<Range<u64>>> {
+    fn ranges_mut(&self) -> std::sync::RwLockWriteGuard<'_, Vec<Range<u64>>> {
         self.0.write().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -240,6 +239,8 @@ pub(crate) fn zero_pages(
     if !inside || in_guard(low_guard, addr, len) || in_read_only(&read_only, addr, len) {
         return Err(Fault);
     }
+    #[cfg(not(all(unix, feature = "sys")))]
+    let _ = base;
     #[cfg(all(unix, feature = "sys"))]
     {
         // SAFETY: in bounds, checked above.

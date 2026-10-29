@@ -650,6 +650,7 @@ test-js-api:
 
 lint-js:
 	cargo clippy --target wasm32-unknown-unknown --manifest-path lib/api/Cargo.toml --no-default-features --features "js-default" --locked -- -D clippy::all
+	cargo clippy --target wasm32-unknown-unknown -p wasixv2 --no-default-features --features "js,web,wasix1" --locked -- -D clippy::all
 
 test-js-wasi:
 	cd lib/wasix && wasm-pack test --node -- --no-default-features --features test-js,wasmer/js,wasmer/std
