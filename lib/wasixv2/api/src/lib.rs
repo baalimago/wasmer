@@ -40,7 +40,7 @@ use wasixv2_vfs::{Cred, Ctx, Errno, LookupFlags, MountFlags, NAME_MAX, Vfs};
 use wasixv2_vfs_mem::{Limits, MemFs};
 use wasixv2_vfs_overlay::{MAX_LOWERS, OverlayFs};
 use wasixv2_vfs_package::PackageFs;
-pub use wasixv2_vnet::{Net, NetConfig};
+pub use wasixv2_vnet::{Backend, Net, NetConfig};
 #[cfg(feature = "wasix1")]
 pub use wasixv2_wasix1::{
     CommandDefaults, V1Flavor, is_wasix1_module, module_flavor as wasix1_module_flavor,
@@ -142,6 +142,8 @@ pub struct MachineBuilder {
     loader: Option<Arc<dyn Loader>>,
     console: Option<(Console, [bool; 3])>,
     dns: Dns,
+    /// The embedder's network backend; the host's sockets otherwise.
+    backend: Option<Arc<dyn Backend>>,
 }
 
 /// Where the machine's programs resolve names: what the guest's `/etc/resolv.conf` names, on
@@ -173,12 +175,21 @@ impl MachineBuilder {
             loader: None,
             console: None,
             dns: Dns::default(),
+            backend: None,
         }
     }
 
     /// Where the machine's programs resolve names ([`Dns::Builtin`] by default).
     pub fn dns(mut self, dns: Dns) -> Self {
         self.dns = dns;
+        self
+    }
+
+    /// Carries the traffic leaving the machine through `backend` instead of the host's sockets,
+    /// behind the same uplink, gateway and DNS server. [`Dns::Host`] names the host's own name
+    /// servers, which only the host backend knows, so here it acts as [`Dns::Builtin`].
+    pub fn backend(mut self, backend: Arc<dyn Backend>) -> Self {
+        self.backend = Some(backend);
         self
     }
 
@@ -251,9 +262,13 @@ impl MachineBuilder {
             loader,
             console,
             dns,
+            backend,
         } = self;
         let owner = (user.uid(), user.gid());
-        let network = default_network(dns);
+        let network = match backend {
+            Some(backend) => Net::new(uplink_config(dns), Some(backend)),
+            None => default_network(dns),
+        };
         let root = root
             .unwrap_or_else(|| default_root(&host, &network.resolv_conf(), &user, uname.release()));
         #[cfg(feature = "wasix1")]
@@ -1038,26 +1053,28 @@ fn default_network(dns: Dns) -> Arc<Net> {
             return Net::new(NetConfig::default(), None);
         }
     };
-    let mut config = NetConfig::host_default();
-    match dns {
-        Dns::Builtin => {}
-        Dns::Host => {
-            let host_resolv = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
-            let upstream =
-                std::fs::read_to_string(wasixv2_vnet_host::SYSTEMD_RESOLVED_UPSTREAM).ok();
-            config.dns_server.clear();
-            config.nameservers = wasixv2_vnet_host::host_nameservers(
-                &host_resolv,
-                upstream.as_deref(),
-                config.host_loopback_alias,
-            );
-        }
-        Dns::None => {
-            config.dns_server.clear();
-            config.nameservers.clear();
-        }
+    let mut config = uplink_config(dns);
+    if dns == Dns::Host {
+        let host_resolv = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();
+        let upstream = std::fs::read_to_string(wasixv2_vnet_host::SYSTEMD_RESOLVED_UPSTREAM).ok();
+        config.dns_server.clear();
+        config.nameservers = wasixv2_vnet_host::host_nameservers(
+            &host_resolv,
+            upstream.as_deref(),
+            config.host_loopback_alias,
+        );
     }
     Net::new(config, Some(backend))
+}
+
+/// A namespace whose uplink leads to a backend, resolving as `dns` says.
+fn uplink_config(dns: Dns) -> NetConfig {
+    let mut config = NetConfig::host_default();
+    if dns == Dns::None {
+        config.dns_server.clear();
+        config.nameservers.clear();
+    }
+    config
 }
 
 #[cfg(not(all(feature = "host-network", unix)))]

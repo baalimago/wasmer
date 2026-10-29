@@ -3,10 +3,15 @@
 
 use std::{
     io,
+    net::SocketAddr,
     sync::{Arc, Mutex},
 };
 
 use wasixv2::{ByteSink, EmptySource, LocalFuture, Machine, Stdio};
+use wasixv2_abi::Errno;
+use wasixv2_vnet::{
+    Backend, BackendDatagram, BackendStream, Domain, InboundSink, Publication, WaitQueue,
+};
 
 #[derive(Default)]
 struct Capture(Mutex<Vec<u8>>);
@@ -71,4 +76,61 @@ async fn loopback_tcp_carries_data_between_two_sockets() {
 
     assert_eq!(status, 0, "step {}, errno {}", status >> 8, status & 0xff);
     assert_eq!(*stdout.0.lock().unwrap(), b"ping");
+}
+
+/// Refuses every connection, remembering where each was headed.
+#[derive(Default)]
+struct Refusing(Mutex<Vec<SocketAddr>>);
+
+impl Backend for Refusing {
+    fn connect(&self, peer: SocketAddr, _: WaitQueue) -> Result<Arc<dyn BackendStream>, Errno> {
+        self.0.lock().unwrap().push(peer);
+        Err(Errno::ECONNREFUSED)
+    }
+    fn datagram(&self, _: Domain, _: WaitQueue) -> Result<Arc<dyn BackendDatagram>, Errno> {
+        Err(Errno::EPERM)
+    }
+    fn publish(
+        &self,
+        _: SocketAddr,
+        _: u32,
+        _: Arc<dyn InboundSink>,
+    ) -> io::Result<Box<dyn Publication>> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+}
+
+#[tokio::test]
+async fn an_embedders_backend_carries_traffic_leaving_the_machine() {
+    let wat = r#"
+      (module
+        (import "wasixv2" "socket" (func $socket (param i32 i32 i32) (result i32)))
+        (import "wasixv2" "connect" (func $connect (param i32 i32 i32) (result i32)))
+        (import "wasixv2" "exit_group" (func $exit_group (param i32)))
+        (memory (export "memory") 1)
+        ;; sockaddr_in for 192.0.2.7:80
+        (data (i32.const 16) "\02\00\00\50\c0\00\02\07\00\00\00\00\00\00\00\00")
+
+        (func (export "_start") (local $fd i32)
+          ;; AF_INET, SOCK_STREAM
+          (local.set $fd (call $socket (i32.const 2) (i32.const 1) (i32.const 0)))
+          (call $exit_group
+            (i32.sub (i32.const 0) (call $connect (local.get $fd) (i32.const 16) (i32.const 16))))
+          unreachable))
+    "#;
+    let wasm = wat::parse_str(wat).expect("valid test module");
+    let backend = Arc::new(Refusing::default());
+    let machine = Machine::builder().backend(backend.clone()).build();
+
+    let stdio = Stdio {
+        stdin: Arc::new(EmptySource),
+        stdout: Arc::new(Capture::default()),
+        stderr: Arc::new(Capture::default()),
+    };
+
+    let status = machine.run(&wasm, stdio).await.unwrap();
+
+    assert_eq!(status, Errno::ECONNREFUSED.0);
+    let peer: SocketAddr = "192.0.2.7:80".parse().unwrap();
+    assert_eq!(*backend.0.lock().unwrap(), [peer]);
 }
