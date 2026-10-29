@@ -828,9 +828,12 @@ where
     if grown > limit {
         return Ok(-1);
     }
+    // The low guard is protected once, at the base the memory had then. Only native memories
+    // have a base to check: the JavaScript backend gives no pointer into its memories.
+    #[cfg(all(unix, feature = "sys"))]
     let base = memory.view(&*store).data_ptr();
     let previous = memory.grow(&mut *store, delta as u32);
-    // The low guard is protected once, at the base the memory had then.
+    #[cfg(all(unix, feature = "sys"))]
     debug_assert!(
         data.low_guard == 0 || memory.view(&*store).data_ptr() == base,
         "a guarded memory moved as it grew"
