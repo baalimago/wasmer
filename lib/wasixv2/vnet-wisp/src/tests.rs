@@ -460,3 +460,17 @@ fn malformed_and_server_opened_streams_are_errors() {
         Err(ReceiveError::ServerConnect(4))
     );
 }
+
+#[test]
+fn host_for_names_the_host_behind_an_address() {
+    let h = Harness::up(8);
+    let peer = resolve(&h.backend, "api.openai.com");
+    let unknown = std::net::Ipv4Addr::from(u32::from(match peer.ip() {
+        std::net::IpAddr::V4(v4) => v4,
+        v6 => panic!("not v4: {v6}"),
+    }) + 1);
+
+    assert_eq!(h.backend.host_for(peer.ip()).as_deref(), Some("api.openai.com"));
+    assert_eq!(h.backend.host_for(unknown.into()), None);
+    assert_eq!(h.backend.host_for(addr("1.2.3.4:80").ip()).as_deref(), Some("1.2.3.4"));
+}

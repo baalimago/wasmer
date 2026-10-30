@@ -35,6 +35,7 @@ use wasixv2_kernel::{FilesystemType, FsParam, HostClock, Kernel};
 use wasixv2_pages::{Provider, SharedPages};
 use wasixv2_syscalls::{Layered, TaskId};
 use wasixv2_trace::Trace;
+pub use wasixv2_trace::{Direction, End, Event, Observer};
 pub use wasixv2_vfs::Filesystem;
 use wasixv2_vfs::{Cred, Ctx, Errno, LookupFlags, MountFlags, NAME_MAX, Vfs};
 use wasixv2_vfs_mem::{Limits, MemFs};
@@ -144,6 +145,8 @@ pub struct MachineBuilder {
     dns: Dns,
     /// The embedder's network backend; the host's sockets otherwise.
     backend: Option<Arc<dyn Backend>>,
+    /// The syscall layer in front of the kernel, which reports to the embedder's observer.
+    trace: Trace,
 }
 
 /// Where the machine's programs resolve names: what the guest's `/etc/resolv.conf` names, on
@@ -176,7 +179,15 @@ impl MachineBuilder {
             console: None,
             dns: Dns::default(),
             backend: None,
+            trace: Trace::default(),
         }
+    }
+
+    /// Reports what the machine's processes do to `observer`: what they run, the files and
+    /// connections they open, the bytes they move and how they end ([`Event`]).
+    pub fn observer(mut self, observer: Arc<dyn Observer>) -> Self {
+        self.trace = Trace::observed(observer);
+        self
     }
 
     /// Where the machine's programs resolve names ([`Dns::Builtin`] by default).
@@ -263,6 +274,7 @@ impl MachineBuilder {
             console,
             dns,
             backend,
+            trace,
         } = self;
         let owner = (user.uid(), user.gid());
         let network = match backend {
@@ -290,7 +302,7 @@ impl MachineBuilder {
         );
         now(mount_kernel_filesystems(&kernel, &host));
         Machine {
-            syscalls: Arc::new(Layered::new(Trace, kernel)),
+            syscalls: Arc::new(Layered::new(trace, kernel)),
             abis,
             #[cfg(feature = "wasix1")]
             wasix1,
@@ -435,7 +447,8 @@ impl Machine {
             self.abis.clone(),
         );
         mount_kernel_filesystems(&kernel, &self.host).await;
-        self.syscalls = Arc::new(Layered::new(Trace, kernel));
+        let trace = self.syscalls.layer.clone();
+        self.syscalls = Arc::new(Layered::new(trace, kernel));
         Ok(())
     }
 
@@ -730,8 +743,12 @@ impl Machine {
         env: Vec<Vec<u8>>,
     ) -> Result<i32, RunError> {
         let kernel = &self.syscalls.inner;
-        let image = match kernel.exec(task, path.as_bytes(), args, env).await {
-            Ok(image) => image,
+        let image = match kernel.exec(task, path.as_bytes(), args.clone(), env).await {
+            Ok(image) => {
+                let trace = &self.syscalls.layer;
+                trace.started(kernel, task, path.as_bytes(), &args).await;
+                image
+            }
             Err(errno) => {
                 // Killed before its image started (`execve` of a dying group fails): it ends
                 // as the kill says.

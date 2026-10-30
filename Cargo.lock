@@ -7207,6 +7207,7 @@ version = "0.0.0"
 dependencies = [
  "futures",
  "tracing",
+ "wasixv2-abi",
  "wasixv2-syscalls",
 ]
 

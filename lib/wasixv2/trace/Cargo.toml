@@ -11,6 +11,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+wasixv2-abi = { path = "../abi" }
 wasixv2-syscalls = { path = "../syscalls" }
 tracing.workspace = true
 

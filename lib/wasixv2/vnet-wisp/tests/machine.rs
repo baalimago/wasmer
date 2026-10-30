@@ -7,7 +7,7 @@ use std::{
 };
 
 use tokio::sync::mpsc;
-use wasixv2::{ByteSink, EmptySource, LocalFuture, Machine, Stdio};
+use wasixv2::{ByteSink, Direction, EmptySource, Event, LocalFuture, Machine, Observer, Stdio};
 use wasixv2_vnet_wisp::{CloseReason, Frame, FrameSink, StreamKind, WispBackend};
 
 #[derive(Default)]
@@ -17,6 +17,15 @@ impl ByteSink for Capture {
     fn write<'a>(&'a self, data: &'a [u8]) -> LocalFuture<'a, io::Result<usize>> {
         self.0.lock().unwrap().extend_from_slice(data);
         Box::pin(async move { Ok(data.len()) })
+    }
+}
+
+#[derive(Default)]
+struct Events(Mutex<Vec<Event>>);
+
+impl Observer for Events {
+    fn observe(&self, event: Event) {
+        self.0.lock().unwrap().push(event);
     }
 }
 
@@ -103,7 +112,11 @@ async fn a_guest_talks_to_the_host_through_the_wisp_server() {
     let (tx, rx) = mpsc::unbounded_channel();
     let backend = WispBackend::new(Arc::new(Channel(tx)));
     let server = tokio::spawn(pong_server(backend.clone(), rx));
-    let machine = Machine::builder().backend(Arc::new(backend)).build();
+    let events = Arc::new(Events::default());
+    let machine = Machine::builder()
+        .backend(Arc::new(backend))
+        .observer(events.clone())
+        .build();
     let stdout = Arc::new(Capture::default());
     let stdio = Stdio {
         stdin: Arc::new(EmptySource),
@@ -116,4 +129,38 @@ async fn a_guest_talks_to_the_host_through_the_wisp_server() {
     assert_eq!(status, 0, "step {}, errno {}", status >> 8, status & 0xff);
     assert_eq!(*stdout.0.lock().unwrap(), b"pong");
     assert_eq!(server.await.unwrap(), [("127.0.0.1".to_owned(), 8080)]);
+    let events = events.0.lock().unwrap();
+    let pid = match events.first() {
+        Some(Event::Connect { pid, .. }) => *pid,
+        other => panic!("expected the connect first, got {other:?}"),
+    };
+    assert_eq!(
+        *events,
+        [
+            Event::Connect {
+                pid,
+                fd: 3,
+                addr: "10.0.2.2:8080".parse().unwrap()
+            },
+            Event::Transfer {
+                pid,
+                fd: 3,
+                direction: Direction::Out,
+                bytes: 4
+            },
+            Event::Transfer {
+                pid,
+                fd: 3,
+                direction: Direction::In,
+                bytes: 4
+            },
+            Event::Transfer {
+                pid,
+                fd: 1,
+                direction: Direction::Out,
+                bytes: 4
+            },
+            Event::Exit { pid, code: 0 },
+        ]
+    );
 }

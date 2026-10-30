@@ -22,7 +22,7 @@ pub mod web;
 
 use std::{
     collections::HashMap,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
 };
 
@@ -94,6 +94,13 @@ impl WispBackend {
                 names: Names::default(),
             }),
         }))
+    }
+
+    /// The host a connection to `addr` reaches through the server: the name a lookup handed
+    /// `addr` out for, the address itself otherwise. `None` for a fake address no lookup
+    /// handed out.
+    pub fn host_for(&self, addr: IpAddr) -> Option<String> {
+        self.0.session().names.host_for(addr)
     }
 
     /// Takes one binary message from the WebSocket.
