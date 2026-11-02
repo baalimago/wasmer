@@ -41,7 +41,7 @@ impl Global {
         let descriptor = js_sys::Object::new();
         let (type_str, value) = match val {
             Value::I32(i) => ("i32", JsValue::from_f64(i as _)),
-            Value::I64(i) => ("i64", JsValue::from_f64(i as _)),
+            Value::I64(i) => ("i64", JsValue::from(i)),
             Value::F32(f) => ("f32", JsValue::from_f64(f as _)),
             Value::F64(f) => ("f64", JsValue::from_f64(f)),
             _ => unimplemented!("The type is not yet supported in the JS Global API"),
@@ -121,7 +121,7 @@ impl Global {
         }
         let new_value = match val {
             Value::I32(i) => JsValue::from_f64(i as _),
-            Value::I64(i) => JsValue::from_f64(i as _),
+            Value::I64(i) => JsValue::from(i),
             Value::F32(f) => JsValue::from_f64(f as _),
             Value::F64(f) => JsValue::from_f64(f),
             _ => {
