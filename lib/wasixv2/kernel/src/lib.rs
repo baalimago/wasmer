@@ -14,6 +14,8 @@ mod fasync;
 mod file;
 mod fs;
 mod futex;
+mod hoststream;
+mod http;
 mod ident;
 mod ioctl;
 mod ipc;
@@ -1362,6 +1364,10 @@ impl Syscalls for Kernel {
 
     async fn exit(&self, caller: &Caller<'_>, error_code: i32) -> SysResult<()> {
         self.sys_exit(caller, error_code).await
+    }
+
+    async fn http_open(&self, caller: &Caller<'_>, request: UserSlice) -> SysResult<Fd> {
+        self.sys_http_open(caller, request).await
     }
 
     async fn exit_group(&self, caller: &Caller<'_>, error_code: i32) -> SysResult<()> {

@@ -60,6 +60,7 @@ where
             "startup_get" => Function::new_typed_with_env_async(store, env, startup_get::<S>),
             "thread_spawn" => Function::new_typed_with_env_async(store, env, thread_spawn::<S>),
             "spawn" => Function::new_typed_with_env_async(store, env, spawn::<S>),
+            "http_open" => Function::new_typed_with_env_async(store, env, http_open::<S>),
             "signal_callback_register" => {
                 Function::new_typed_with_env_async(store, env, signal_callback_register::<S>)
             }
@@ -619,6 +620,30 @@ where
         )
         .await;
         if let Some(ret) = return_to_guest(&env, &*syscalls, task, ret).await {
+            return ret;
+        }
+    }
+}
+
+async fn http_open<S>(
+    env: AsyncFunctionEnvMut<ExecEnv<S>>,
+    request: i32,
+    request_len: i32,
+) -> Result<i32, RuntimeError>
+where
+    S: Syscalls + Control + 'static,
+{
+    let (syscalls, task) = caller_parts(&env).await;
+    let memory = GuestMemory { env: &env };
+    let caller = Caller::new(task, &memory);
+    loop {
+        let ret = Syscalls::http_open(
+            &*syscalls,
+            &caller,
+            UserSlice::new(request as u32, request_len as u32),
+        )
+        .await;
+        if let Some(ret) = return_to_guest(&env, &*syscalls, task, ret.map(|v| v.0)).await {
             return ret;
         }
     }

@@ -31446,6 +31446,28 @@ pub const SYSCALLS: &[SyscallDef] = &[
         merged_i64: &[],
     },
     SyscallDef {
+        name: "http_open",
+        module: "wasixv2",
+        import_name: "http_open",
+        nr: None,
+        params: &[
+            SyscallParam {
+                name: "request",
+                ty: ValType::I32,
+                wit_type: "const-buf",
+            },
+            SyscallParam {
+                name: "request_len",
+                ty: ValType::I32,
+                wit_type: "u32",
+            },
+        ],
+        result: Some(ValType::I32),
+        noreturn: false,
+        unsupported: false,
+        merged_i64: &[],
+    },
+    SyscallDef {
         name: "signal_callback_register",
         module: "wasixv2",
         import_name: "signal_callback_register",

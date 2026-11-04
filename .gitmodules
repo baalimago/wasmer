@@ -9,7 +9,8 @@
 	url = https://github.com/wasmerio/wasmer-test-files.git
 [submodule "lib/wasixv2/codegen"]
 	path = lib/wasixv2/codegen
-	url = https://github.com/wasix-org/wasixv2-abi.git
+	url = https://github.com/baalimago/wasixv2-abi.git
+	branch = poc-clai-via-wasix-wasmersh
 [submodule "tests/wasixv2"]
 	path = tests/wasixv2
 	url = https://github.com/wasix-org/wasixv2-tests.git

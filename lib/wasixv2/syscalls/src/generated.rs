@@ -141,6 +141,28 @@ pub trait Syscalls {
         Err(Errno::ENOSYS.into())
     }
 
+    /// One HTTP request as data, made by the host's own HTTP client: a guest that cannot terminate
+    /// TLS asks for a `https` URL and the host carries it, and the guest never writes HTTP/1.1 or
+    /// a TLS record. Returns a descriptor: `read` gives the response, `close` abandons the request
+    /// and `poll` reports it readable as a socket does. One request per descriptor.
+    ///
+    /// The request is a little-endian `u32` method length, the method (`GET`, `POST`, ...), a
+    /// `u32` URL length, the URL, a `u32` header count, then that many pairs of a `u32` name
+    /// length, the name, a `u32` value length and the value, then the body to the end of
+    /// `request`. The host computes `content-length` and refuses `host`, `connection`,
+    /// `user-agent` and `accept-encoding`.
+    ///
+    /// The response, as `read` returns it, is the same shape with a `u32` status before the header
+    /// count: the head first, then the body, then 0. A 3xx is the response, never followed.
+    ///
+    /// Errors are `-errno`, never a response: `EINVAL` for a malformed request, `EPROTONOSUPPORT`
+    /// for a scheme other than `http` and `https`, `ENOSYS` from a host without this call.
+    ///
+    /// Wasm import `wasixv2.http_open`.
+    async fn http_open(&self, caller: &Caller<'_>, request: UserSlice) -> SysResult<Fd> {
+        Err(Errno::ENOSYS.into())
+    }
+
     /// Registers libc's signal trampoline for the thread group, as an index into the module's
     /// indirect function table, with the signature `fn(signo: s32, info: siginfo-ptr, uctx: void-ptr)`.
     /// Threads and `fork` children inherit it; `execve` clears it. Until it is registered, signals
@@ -4511,6 +4533,9 @@ pub enum Syscall {
         argv: CstrArray,
         envp: CstrArray,
     },
+    HttpOpen {
+        request: UserSlice,
+    },
     SignalCallbackRegister {
         callback: u32,
     },
@@ -6137,6 +6162,7 @@ pub enum SyscallRet {
     StartupGet(i32),
     ThreadSpawn(i32),
     Spawn(i32),
+    HttpOpen(Fd),
     SignalCallbackRegister(i32),
     CallDynamic(i32),
     ReflectSignature(i32),
@@ -6479,6 +6505,7 @@ impl Syscall {
             Syscall::StartupGet { .. } => None,
             Syscall::ThreadSpawn { .. } => None,
             Syscall::Spawn { .. } => None,
+            Syscall::HttpOpen { .. } => None,
             Syscall::SignalCallbackRegister { .. } => None,
             Syscall::CallDynamic { .. } => None,
             Syscall::ReflectSignature { .. } => None,
@@ -6851,6 +6878,9 @@ impl Syscall {
                 u64::from(argv.addr()),
                 u64::from(envp.addr()),
             ]),
+            Syscall::HttpOpen { request } => {
+                regs([u64::from(request.addr), u64::from(request.len)])
+            }
             Syscall::SignalCallbackRegister { callback } => regs([u64::from(callback)]),
             Syscall::CallDynamic {
                 function,
@@ -9086,6 +9116,7 @@ impl Syscall {
             Syscall::StartupGet { .. } => SyscallRet::StartupGet(raw as i32),
             Syscall::ThreadSpawn { .. } => SyscallRet::ThreadSpawn(raw as i32),
             Syscall::Spawn { .. } => SyscallRet::Spawn(raw as i32),
+            Syscall::HttpOpen { .. } => SyscallRet::HttpOpen(Fd(raw as i32)),
             Syscall::SignalCallbackRegister { .. } => {
                 SyscallRet::SignalCallbackRegister(raw as i32)
             }
@@ -9468,6 +9499,9 @@ pub async fn dispatch<S: Syscalls + ?Sized>(
                 .spawn(caller, pid, path, actions, actions_len, attr, argv, envp)
                 .await?,
         ),
+        Syscall::HttpOpen { request } => {
+            SyscallRet::HttpOpen(syscalls.http_open(caller, request).await?)
+        }
         Syscall::SignalCallbackRegister { callback } => SyscallRet::SignalCallbackRegister(
             syscalls.signal_callback_register(caller, callback).await?,
         ),
@@ -11420,6 +11454,14 @@ impl<L: Layer<S>, S: Syscalls> Syscalls for Layered<L, S> {
         match self.layer.call(caller, call, &self.inner).await? {
             SyscallRet::Spawn(ret) => Ok(ret),
             _ => mismatch("spawn"),
+        }
+    }
+
+    async fn http_open(&self, caller: &Caller<'_>, request: UserSlice) -> SysResult<Fd> {
+        let call = Syscall::HttpOpen { request };
+        match self.layer.call(caller, call, &self.inner).await? {
+            SyscallRet::HttpOpen(ret) => Ok(ret),
+            _ => mismatch("http_open"),
         }
     }
 

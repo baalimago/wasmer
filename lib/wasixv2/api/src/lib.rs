@@ -27,8 +27,8 @@ pub use wasixv2_host::TokioHost;
 #[cfg(feature = "web")]
 pub use wasixv2_host::WebHost;
 pub use wasixv2_host::{
-    ByteSink, ByteSource, Console, EmptySource, Executor, FnSink, Host, LocalFuture, ThreadStart,
-    WindowSize,
+    ByteSink, ByteSource, Console, EmptySource, Executor, FnSink, Host, HttpRequest, HttpResponse,
+    LocalFuture, ThreadStart, WindowSize,
 };
 pub use wasixv2_kernel::{Credentials, PowerRequest, ProcessConfig, Stdio, Uname, UnameError};
 use wasixv2_kernel::{FilesystemType, FsParam, HostClock, Kernel};

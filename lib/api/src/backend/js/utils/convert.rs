@@ -77,7 +77,10 @@ pub fn js_value_to_wasmer(
 pub fn wasmer_value_to_js(val: &Value) -> JsValue {
     match val {
         Value::I32(i) => JsValue::from_f64(*i as _),
-        Value::I64(i) => JsValue::from_f64(*i as _),
+        // A JS function that takes an i64 gets a BigInt, and wasm-bindgen refuses a Number:
+        // "Cannot convert 7 to a BigInt". A guest's lseek offset is an i64, so this is every
+        // file seek in the page.
+        Value::I64(i) => JsValue::from(*i),
         Value::F32(f) => JsValue::from_f64(*f as _),
         Value::F64(f) => JsValue::from_f64(*f),
         Value::V128(f) => JsValue::from_f64(*f as _),

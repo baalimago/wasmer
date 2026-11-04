@@ -7208,6 +7208,7 @@ dependencies = [
  "futures",
  "tracing",
  "wasixv2-abi",
+ "wasixv2-host",
  "wasixv2-syscalls",
 ]
 

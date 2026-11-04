@@ -106,6 +106,15 @@ pub enum Event {
     Rename { pid: i32, from: String, to: String },
     /// `pid` made the directory `path`.
     Mkdir { pid: i32, path: String },
+    /// `pid` had the host carry a `method` request to `host`, `bytes` of it, on `fd`: the page's
+    /// own HTTP client, which holds the TLS.
+    Http {
+        pid: i32,
+        fd: i32,
+        method: String,
+        host: String,
+        bytes: u64,
+    },
 }
 
 /// How a reaped child ended.
@@ -143,6 +152,7 @@ enum Before {
     Rename(String, String),
     Addr(SocketAddr),
     Wait(GuestPtr<[u8; 128]>),
+    Http { method: String, host: String, bytes: u64 },
 }
 
 /// The longest path or argument read, as Linux's `PATH_MAX` and `MAX_ARG_STRLEN`.
@@ -197,6 +207,12 @@ impl Watch {
             Syscall::Waitid { infop, .. } if !infop.is_null() => {
                 Some(Before::Wait(GuestPtr::new(infop.addr())))
             }
+            Syscall::HttpOpen { request } => request
+                .copy_in(memory, MAX_STRING)
+                .await
+                .ok()
+                .as_deref()
+                .and_then(http_request),
             Syscall::ExitGroup { error_code } => {
                 if let Some(pid) = self.pid(caller, next).await {
                     self.observer.observe(Event::Exit {
@@ -302,6 +318,15 @@ impl Watch {
                 };
                 (child > 0).then_some(Event::Reaped { pid, child, end })
             }
+            (Syscall::HttpOpen { .. }, Before::Http { method, host, bytes }, SyscallRet::HttpOpen(fd)) => {
+                Some(Event::Http {
+                    pid,
+                    fd: fd.0,
+                    method,
+                    host,
+                    bytes,
+                })
+            }
             _ => None,
         }
     }
@@ -310,6 +335,23 @@ impl Watch {
 const CLD_EXITED: i32 = 1;
 const CLD_KILLED: i32 = 2;
 const CLD_DUMPED: i32 = 3;
+
+/// What an `http-open` request says, for the peek: its method and the host it is for. A request
+/// this cannot read is not one the kernel carries either.
+fn http_request(bytes: &[u8]) -> Option<Before> {
+    let decoded = wasixv2_host::http::decode(bytes).ok()?;
+    let host = decoded
+        .url
+        .split_once("://")
+        .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or(rest))
+        .unwrap_or_default()
+        .to_string();
+    Some(Before::Http {
+        method: decoded.method,
+        host,
+        bytes: bytes.len() as u64,
+    })
+}
 
 fn transfer(call: &Syscall) -> Option<Direction> {
     match call {

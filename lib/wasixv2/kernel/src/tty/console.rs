@@ -23,7 +23,7 @@ use wasixv2_vfs::{Device, LookupFlags, OpenHow};
 use wasixv2_wait::{NoInterrupt, PollMask, WaitQueue, Waiter};
 
 use super::{Driver, Tty};
-use crate::{Kernel, file::OpenFile, stdio::QueueWaker, sync::MutexExt};
+use crate::{Kernel, file::OpenFile, hoststream::QueueWaker, sync::MutexExt};
 
 /// `HVC_MAJOR`: the hypervisor consoles, `/dev/hvc0` first.
 pub(crate) const HVC_MAJOR: u32 = 229;

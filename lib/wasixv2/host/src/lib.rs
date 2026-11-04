@@ -1,9 +1,11 @@
-//! What the kernel needs from the host: an executor, clocks, timers, entropy and shared memory
-//! objects.
+//! What the kernel needs from the host: an executor, clocks, timers, entropy, shared memory
+//! objects and, when the host has one, an HTTP client.
 //!
 //! The kernel only sees the [`Host`] and [`Executor`] traits and never names an async runtime.
 //! Two implementations ship here: [`TokioHost`] for native embedders (feature `tokio`) and
 //! [`WebHost`] for `wasm32-unknown-unknown` in a browser or node (feature `web`).
+
+pub mod http;
 
 #[cfg(feature = "tokio")]
 mod tokio_host;
@@ -19,6 +21,7 @@ use std::{
     time::Duration,
 };
 
+pub use http::{Bad, HttpRequest, HttpResponse};
 #[cfg(feature = "tokio")]
 pub use tokio_host::TokioHost;
 use wasixv2_pages::SharedPages;
@@ -298,6 +301,16 @@ pub trait Host: Send + Sync {
     fn shared_pages(&self, size: u64) -> io::Result<Arc<dyn SharedPages>> {
         let _ = size;
         Err(io::ErrorKind::Unsupported.into())
+    }
+
+    /// Carries one HTTP request with the host's own HTTP client, for a guest that has none: the
+    /// host terminates TLS and the guest never writes a request line or a TLS record. The
+    /// response's body streams as the host receives it. [`io::ErrorKind::Unsupported`] by
+    /// default, and from hosts without an HTTP client, which the kernel reports as `ENOSYS`;
+    /// another [`io::Error`] is reported as the errno it names.
+    fn http_open(&self, request: HttpRequest) -> LocalFuture<'_, io::Result<HttpResponse>> {
+        let _ = request;
+        Box::pin(async { Err(io::ErrorKind::Unsupported.into()) })
     }
 }
 
