@@ -66,6 +66,19 @@ pub enum RunError {
     Spawn(io::Error),
 }
 
+/// What a new process's descriptors 0, 1 and 2 are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Attach {
+    /// The machine's console when it has one ([`MachineBuilder::console`]), as getty opens a
+    /// terminal for a login; its [`Stdio`] streams otherwise.
+    #[default]
+    Console,
+    /// Its [`Stdio`] streams, even when the machine has a console, as init starts a service:
+    /// its session has no controlling terminal, so the console's input, `^C` and hangup never
+    /// reach it, and its exit hangs nothing up.
+    Stdio,
+}
+
 /// The directories [`Machine::install_commands`] puts commands in, relative to the root.
 const COMMAND_DIRS: [&str; 2] = ["bin", "usr/bin"];
 
@@ -691,7 +704,19 @@ impl Machine {
         module: &Module,
         config: ProcessConfig,
     ) -> Result<i32, RunError> {
-        let (task, running) = self.start(config).await?;
+        self.run_module_with(engine, module, config, Attach::Console)
+            .await
+    }
+
+    /// [`Machine::run_module`] with descriptors 0, 1 and 2 as `attach` says.
+    pub async fn run_module_with(
+        &self,
+        engine: &Engine,
+        module: &Module,
+        config: ProcessConfig,
+        attach: Attach,
+    ) -> Result<i32, RunError> {
+        let (task, running) = self.start(config, attach).await?;
         let status = self
             .run_image(Store::new(engine.clone()), module, task)
             .await;
@@ -716,9 +741,21 @@ impl Machine {
         path: &str,
         config: ProcessConfig,
     ) -> Result<i32, RunError> {
+        self.run_file_with(engine, path, config, Attach::Console)
+            .await
+    }
+
+    /// [`Machine::run_file`] with descriptors 0, 1 and 2 as `attach` says.
+    pub async fn run_file_with(
+        &self,
+        engine: &Engine,
+        path: &str,
+        config: ProcessConfig,
+        attach: Attach,
+    ) -> Result<i32, RunError> {
         let bytes = |strings: &[String]| strings.iter().map(|s| s.as_bytes().to_vec()).collect();
         let (args, env) = (bytes(&config.args), bytes(&config.env));
-        let (task, running) = self.start(config).await?;
+        let (task, running) = self.start(config, attach).await?;
         let status = self.exec_file(engine, task, path, args, env).await;
         running.released();
         self.console_sent().await;
@@ -792,10 +829,14 @@ impl Machine {
         self.syscalls.inner.power_request()
     }
 
-    /// Spawns the process `config` describes, in the working directory, and keeps it on
-    /// [`Machine::signal`]'s list while the returned guard lives; the guard kills it unless
-    /// told that the run released it.
-    async fn start(&self, config: ProcessConfig) -> Result<(TaskId, Running<'_>), RunError> {
+    /// Spawns the process `config` describes, in the working directory, on the console unless
+    /// `attach` says otherwise, and keeps it on [`Machine::signal`]'s list while the returned
+    /// guard lives; the guard kills it unless told that the run released it.
+    async fn start(
+        &self,
+        config: ProcessConfig,
+        attach: Attach,
+    ) -> Result<(TaskId, Running<'_>), RunError> {
         self.in_use.store(true, Ordering::Relaxed);
         #[cfg(feature = "wasix1")]
         self.resolve_wasix1_commands().await;
@@ -814,7 +855,7 @@ impl Machine {
                 .await
                 .map_err(|errno| RunError::WorkingDir(errno_to_io(errno)))?;
         }
-        if let Some((_, fds)) = &self.console {
+        if let (Some((_, fds)), Attach::Console) = (&self.console, attach) {
             self.syscalls
                 .inner
                 .attach_console(task, *fds)
